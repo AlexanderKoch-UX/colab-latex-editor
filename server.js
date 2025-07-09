@@ -259,63 +259,335 @@ async function compileLatex(documentId, socket) {
   
   console.log('Document content length:', doc.content.length);
   
-  const tempDir = path.join('temp', documentId);
-  await fs.ensureDir(tempDir);
-  console.log('Temp directory created:', tempDir);
+  // Use free online LaTeX compilation services (no Puppeteer fallback for Docker)
+  const services = [
+    { name: 'LaTeX.Online', func: compileWithLatexOnline },
+    { name: 'LaTeX.codecogs', func: compileWithCodecogs },
+    { name: 'QuickLaTeX', func: compileWithQuickLatex },
+    { name: 'Simple HTML Preview', func: compileWithHtmlPreview }
+  ];
   
-  const texFile = path.join(tempDir, 'document.tex');
-  const pdfFile = path.join(tempDir, 'document.pdf');
-  const outputPdf = path.join('downloads', `${documentId}.pdf`);
-  
-  // Write LaTeX content to file
-  await fs.writeFile(texFile, doc.content);
-  console.log('LaTeX file written:', texFile);
-  
-  // Compile LaTeX
-  const command = `pdflatex -interaction=nonstopmode -output-directory="${tempDir}" "${texFile}"`;
-  console.log('Executing command:', command);
-  
-  exec(command, async (error, stdout, stderr) => {
-    console.log('pdflatex stdout:', stdout);
-    console.log('pdflatex stderr:', stderr);
-    
-    if (error) {
-      console.error('LaTeX compilation error:', error);
-      socket.emit('compile-error', { message: stderr || error.message });
-      return;
-    }
-    
+  for (const service of services) {
     try {
-      // Check if PDF was created
-      const pdfExists = await fs.pathExists(pdfFile);
-      console.log('PDF file exists:', pdfExists);
-      
-      if (pdfExists) {
-        // Copy PDF to downloads directory
-        await fs.copy(pdfFile, outputPdf);
-        console.log('PDF copied to downloads:', outputPdf);
-        
-        socket.emit('compile-success', { 
-          pdfUrl: `/downloads/${documentId}.pdf`,
-          message: 'Document compiled successfully'
-        });
-      } else {
-        console.log('PDF file was not generated');
-        socket.emit('compile-error', { message: 'PDF generation failed. Check LaTeX syntax.' });
-      }
-    } catch (copyError) {
-      console.error('Error copying PDF:', copyError);
-      socket.emit('compile-error', { message: 'Failed to save PDF' });
+      console.log(`Trying ${service.name}...`);
+      await service.func(documentId, doc.content, socket);
+      return; // Success, exit
+    } catch (error) {
+      console.log(`${service.name} failed:`, error.message);
+      continue; // Try next service
     }
-    
-    // Clean up temp files (but keep for debugging for now)
-    // try {
-    //   await fs.remove(tempDir);
-    // } catch (cleanupError) {
-    //   console.error('Cleanup error:', cleanupError);
-    // }
+  }
+  
+  // All services failed
+  console.error('All online compilation services failed');
+  socket.emit('compile-error', { 
+    message: 'PDF compilation failed. All online services are currently unavailable. Please try again later.' 
   });
 }
+
+// Method 1: LaTeX.Online - Free LaTeX compilation service
+async function compileWithLatexOnline(documentId, content, socket) {
+  const axios = require('axios');
+  const FormData = require('form-data');
+  
+  try {
+    console.log('Trying LaTeX.Online service...');
+    
+    const form = new FormData();
+    form.append('file', content, {
+      filename: 'document.tex',
+      contentType: 'text/plain'
+    });
+    
+    const response = await axios.post('https://latex.ytotech.com/builds/sync', form, {
+      headers: { 
+        ...form.getHeaders(),
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      responseType: 'arraybuffer',
+      timeout: 60000, // Increased timeout
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity
+    });
+    
+    console.log('LaTeX.Online response status:', response.status);
+    console.log('LaTeX.Online response size:', response.data.length);
+    
+    // LaTeX.Online returns 201 for successful compilation
+    if ((response.status === 200 || response.status === 201) && response.data.length > 1000) {
+      const outputPdf = path.join('downloads', `${documentId}.pdf`);
+      await fs.writeFile(outputPdf, response.data);
+      
+      console.log('LaTeX.Online compilation successful');
+      socket.emit('compile-success', { 
+        pdfUrl: `/downloads/${documentId}.pdf`,
+        message: 'Document compiled successfully (LaTeX.Online)'
+      });
+    } else {
+      throw new Error(`Invalid response: status=${response.status}, size=${response.data.length}`);
+    }
+  } catch (error) {
+    console.error('LaTeX.Online error:', error.message);
+    throw new Error('LaTeX.Online service failed');
+  }
+}
+
+// Method 2: Overleaf API (if available)
+async function compileWithOverleafAPI(documentId, content, socket) {
+  // Note: This would require Overleaf API access
+  throw new Error('Overleaf API not available');
+}
+
+// Method 3: LaTeX.codecogs - Free LaTeX to image/PDF service
+async function compileWithCodecogs(documentId, content, socket) {
+  const axios = require('axios');
+  
+  try {
+    // Extract just the document content (remove preamble for codecogs)
+    let cleanContent = content;
+    const documentMatch = content.match(/\\begin\{document\}([\s\S]*?)\\end\{document\}/);
+    if (documentMatch) {
+      cleanContent = documentMatch[1].trim();
+    }
+    
+    // If content is too long, skip codecogs
+    if (cleanContent.length > 2000) {
+      throw new Error('Content too long for Codecogs');
+    }
+    
+    // Codecogs LaTeX service - use PNG format which is more reliable
+    const encodedLatex = encodeURIComponent(cleanContent);
+    const url = `https://latex.codecogs.com/png.latex?\\dpi{150}\\bg_white ${encodedLatex}`;
+    
+    console.log('Trying Codecogs with URL length:', url.length);
+    
+    const response = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 30000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'image/png,image/*,*/*'
+      }
+    });
+    
+    console.log('Codecogs response status:', response.status);
+    console.log('Codecogs response size:', response.data.length);
+    
+    if (response.status === 200 && response.data.length > 500) {
+      const outputFile = path.join('downloads', `${documentId}.png`);
+      await fs.writeFile(outputFile, response.data);
+      
+      socket.emit('compile-success', { 
+        pdfUrl: `/downloads/${documentId}.png`,
+        message: 'Document compiled successfully (Codecogs - PNG Preview)'
+      });
+    } else {
+      throw new Error('Codecogs returned invalid response');
+    }
+  } catch (error) {
+    console.error('Codecogs error:', error.message);
+    throw new Error('Codecogs service failed');
+  }
+}
+
+// Method 4: QuickLaTeX - Free LaTeX compilation
+async function compileWithQuickLatex(documentId, content, socket) {
+  const axios = require('axios');
+  
+  try {
+    // Extract just the document content for QuickLaTeX
+    let cleanContent = content;
+    const documentMatch = content.match(/\\begin\{document\}([\s\S]*?)\\end\{document\}/);
+    if (documentMatch) {
+      cleanContent = documentMatch[1].trim();
+    }
+    
+    // Skip if content is too complex
+    if (cleanContent.length > 1000) {
+      throw new Error('Content too complex for QuickLaTeX');
+    }
+    
+    console.log('Trying QuickLaTeX with content length:', cleanContent.length);
+    
+    // QuickLaTeX API - simplified approach
+    const formData = new URLSearchParams();
+    formData.append('formula', cleanContent);
+    formData.append('fsize', '14px');
+    formData.append('fcolor', '000000');
+    formData.append('mode', '0');
+    formData.append('out', '1');
+    formData.append('remhost', 'quicklatex.com');
+    
+    const response = await axios.post('https://quicklatex.com/latex3.f', formData, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      },
+      timeout: 30000
+    });
+    
+    console.log('QuickLaTeX response status:', response.status);
+    console.log('QuickLaTeX response preview:', response.data.substring(0, 200));
+    
+    if (response.status === 200 && response.data.includes('http')) {
+      // QuickLaTeX returns a URL to the generated image
+      const lines = response.data.split('\n');
+      const imageUrl = lines.find(line => line.includes('http') && (line.includes('.png') || line.includes('.gif')));
+      
+      if (imageUrl) {
+        console.log('QuickLaTeX image URL found:', imageUrl.trim());
+        
+        // Download the image
+        const imageResponse = await axios.get(imageUrl.trim(), {
+          responseType: 'arraybuffer',
+          timeout: 30000
+        });
+        
+        const outputFile = path.join('downloads', `${documentId}_quicklatex.png`);
+        await fs.writeFile(outputFile, imageResponse.data);
+        
+        socket.emit('compile-success', { 
+          pdfUrl: `/downloads/${documentId}_quicklatex.png`,
+          message: 'Document compiled successfully (QuickLaTeX - Image Preview)'
+        });
+        return;
+      }
+    }
+    
+    throw new Error('QuickLaTeX returned invalid response');
+  } catch (error) {
+    console.error('QuickLaTeX error:', error.message);
+    throw new Error('QuickLaTeX service failed');
+  }
+}
+
+// Method 5: Simple HTML Preview - Last resort fallback
+async function compileWithHtmlPreview(documentId, content, socket) {
+  console.log('Using HTML preview fallback...');
+  
+  try {
+    // Convert LaTeX to HTML
+    const html = convertLatexToHtml(content);
+    
+    // Save as HTML file that can be viewed in browser
+    const outputHtml = path.join('downloads', `${documentId}.html`);
+    await fs.writeFile(outputHtml, html);
+    
+    // Also create a simple "PDF-like" message
+    const pdfMessage = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>LaTeX Preview</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; text-align: center; }
+        .message { background: #f0f8ff; padding: 20px; border-radius: 10px; margin: 20px 0; }
+        .preview-link { display: inline-block; background: #007bff; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin: 10px; }
+    </style>
+</head>
+<body>
+    <div class="message">
+        <h2>LaTeX Preview Ready</h2>
+        <p>PDF compilation services are currently unavailable.</p>
+        <p>Your document has been converted to HTML preview:</p>
+        <a href="${documentId}.html" class="preview-link" target="_blank">View HTML Preview</a>
+    </div>
+</body>
+</html>`;
+    
+    const outputPdf = path.join('downloads', `${documentId}.pdf.html`);
+    await fs.writeFile(outputPdf, pdfMessage);
+    
+    socket.emit('compile-success', { 
+      pdfUrl: `/downloads/${documentId}.pdf.html`,
+      message: 'Document converted to HTML preview (PDF services unavailable)'
+    });
+    
+  } catch (error) {
+    console.error('HTML preview fallback error:', error);
+    throw error;
+  }
+}
+
+// Convert LaTeX to HTML (simplified)
+function convertLatexToHtml(latexContent) {
+  let html = latexContent;
+  
+  // Basic LaTeX to HTML conversion
+  html = html.replace(/\\documentclass\{[^}]*\}/g, '');
+  html = html.replace(/\\usepackage(\[[^\]]*\])?\{[^}]*\}/g, '');
+  html = html.replace(/\\begin\{document\}/g, '');
+  html = html.replace(/\\end\{document\}/g, '');
+  
+  // Replace title, author, date
+  html = html.replace(/\\title\{([^}]*)\}/g, '<h1 style="text-align: center;">$1</h1>');
+  html = html.replace(/\\author\{([^}]*)\}/g, '<p style="text-align: center; font-style: italic;">$1</p>');
+  html = html.replace(/\\date\{([^}]*)\}/g, '<p style="text-align: center;">$1</p>');
+  html = html.replace(/\\maketitle/g, '');
+  html = html.replace(/\\today/g, new Date().toLocaleDateString());
+  
+  // Replace sections
+  html = html.replace(/\\section\{([^}]*)\}/g, '<h2>$1</h2>');
+  html = html.replace(/\\subsection\{([^}]*)\}/g, '<h3>$1</h3>');
+  html = html.replace(/\\subsubsection\{([^}]*)\}/g, '<h4>$1</h4>');
+  
+  // Replace text formatting
+  html = html.replace(/\\textbf\{([^}]*)\}/g, '<strong>$1</strong>');
+  html = html.replace(/\\textit\{([^}]*)\}/g, '<em>$1</em>');
+  html = html.replace(/\\emph\{([^}]*)\}/g, '<em>$1</em>');
+  
+  // Replace lists
+  html = html.replace(/\\begin\{itemize\}/g, '<ul>');
+  html = html.replace(/\\end\{itemize\}/g, '</ul>');
+  html = html.replace(/\\begin\{enumerate\}/g, '<ol>');
+  html = html.replace(/\\end\{enumerate\}/g, '</ol>');
+  html = html.replace(/\\item/g, '<li>');
+  
+  // Replace line breaks
+  html = html.replace(/\\\\/g, '<br>');
+  html = html.replace(/\\newline/g, '<br>');
+  
+  // Clean up and wrap paragraphs
+  html = html.replace(/\n\s*\n/g, '</p><p>');
+  html = html.replace(/^\s+|\s+$/g, '');
+  
+  // Wrap in HTML structure
+  const fullHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>LaTeX Document</title>
+    <style>
+        body {
+            font-family: 'Times New Roman', serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px;
+            color: #333;
+        }
+        h1 { margin-bottom: 20px; font-size: 24px; }
+        h2 { margin-top: 30px; margin-bottom: 15px; font-size: 20px; }
+        h3 { margin-top: 25px; margin-bottom: 10px; font-size: 18px; }
+        h4 { margin-top: 20px; margin-bottom: 8px; font-size: 16px; }
+        p { margin: 15px 0; text-align: justify; }
+        ul, ol { margin: 15px 0; padding-left: 30px; }
+        li { margin: 8px 0; }
+    </style>
+</head>
+<body>
+    <div>${html}</div>
+</body>
+</html>`;
+  
+  return fullHtml;
+}
+
+
+
+
 
 // Save document to database
 async function saveDocumentToDatabase(documentId, content) {
