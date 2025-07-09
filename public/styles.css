@@ -96,6 +96,44 @@ body {
     font-size: 14px;
 }
 
+.btn-toggle {
+    background-color: #6c757d;
+    color: white;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+    transition: all 0.3s ease;
+}
+
+.btn-toggle:hover {
+    background-color: #545b62;
+    transform: translateY(-2px);
+}
+
+.btn-toggle.active {
+    background-color: #28a745;
+    color: white;
+}
+
+.btn-toggle.active:hover {
+    background-color: #218838;
+}
+
+.toggle-icon {
+    font-size: 16px;
+    transition: transform 0.3s ease;
+}
+
+.btn-toggle.active .toggle-icon {
+    transform: scale(1.2);
+}
+
+.toggle-text {
+    font-size: 12px;
+    font-weight: 500;
+}
+
 /* Forms */
 input[type="text"], input[type="password"] {
     padding: 12px;
@@ -382,4 +420,9 @@ input[type="text"]:focus, input[type="password"]:focus {
 
 .compile-status.error {
     color: #dc3545;
+}
+
+.compile-status.pending {
+    color: #17a2b8;
+    font-style: italic;
 }

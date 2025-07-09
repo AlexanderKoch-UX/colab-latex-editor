@@ -27,6 +27,9 @@ app.use('/downloads', express.static('downloads'));
 
 // Database connection
 let db;
+let useInMemoryStorage = false;
+let inMemoryDocuments = new Map();
+
 async function initDatabase() {
   try {
     db = await mysql.createConnection({
@@ -51,8 +54,55 @@ async function initDatabase() {
     
     console.log('Database connected and tables created');
   } catch (error) {
-    console.error('Database connection failed:', error);
-    process.exit(1);
+    console.warn('Database connection failed, using in-memory storage:', error.message);
+    useInMemoryStorage = true;
+    console.log('In-memory storage initialized');
+  }
+}
+
+// Helper functions for database operations
+async function createDocument(id, title, content, passwordHash) {
+  if (useInMemoryStorage) {
+    inMemoryDocuments.set(id, {
+      id,
+      title,
+      content: content || '',
+      password_hash: passwordHash,
+      created_at: new Date(),
+      updated_at: new Date()
+    });
+  } else {
+    await db.execute(
+      'INSERT INTO documents (id, title, content, password_hash) VALUES (?, ?, ?, ?)',
+      [id, title, content || '', passwordHash]
+    );
+  }
+}
+
+async function getDocument(id) {
+  if (useInMemoryStorage) {
+    return inMemoryDocuments.get(id);
+  } else {
+    const [rows] = await db.execute(
+      'SELECT * FROM documents WHERE id = ?',
+      [id]
+    );
+    return rows[0];
+  }
+}
+
+async function updateDocument(id, content) {
+  if (useInMemoryStorage) {
+    const doc = inMemoryDocuments.get(id);
+    if (doc) {
+      doc.content = content;
+      doc.updated_at = new Date();
+    }
+  } else {
+    await db.execute(
+      'UPDATE documents SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [content, id]
+    );
   }
 }
 
@@ -81,18 +131,13 @@ io.on('connection', (socket) => {
     
     try {
       // Verify document exists and password is correct
-      const [rows] = await db.execute(
-        'SELECT * FROM documents WHERE id = ?',
-        [documentId]
-      );
+      const document = await getDocument(documentId);
       
-      if (rows.length === 0) {
+      if (!document) {
         console.log('Document not found:', documentId);
         socket.emit('error', { message: 'Document not found' });
         return;
       }
-      
-      const document = rows[0];
       console.log('Document found:', document.title);
       
       // Check password if document is protected
@@ -214,10 +259,7 @@ app.post('/api/documents', async (req, res) => {
       passwordHash = await bcrypt.hash(password, 10);
     }
     
-    await db.execute(
-      'INSERT INTO documents (id, title, content, password_hash) VALUES (?, ?, ?, ?)',
-      [documentId, title, '', passwordHash]
-    );
+    await createDocument(documentId, title, '', passwordHash);
     
     console.log('Document created successfully:', documentId);
     res.json({ documentId, title });
@@ -230,16 +272,18 @@ app.post('/api/documents', async (req, res) => {
 app.get('/api/documents/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const [rows] = await db.execute(
-      'SELECT id, title, created_at, updated_at FROM documents WHERE id = ?',
-      [id]
-    );
+    const document = await getDocument(id);
     
-    if (rows.length === 0) {
+    if (!document) {
       return res.status(404).json({ error: 'Document not found' });
     }
     
-    res.json(rows[0]);
+    res.json({
+      id: document.id,
+      title: document.title,
+      created_at: document.created_at,
+      updated_at: document.updated_at
+    });
   } catch (error) {
     console.error('Error fetching document:', error);
     res.status(500).json({ error: 'Failed to fetch document' });
@@ -592,10 +636,7 @@ function convertLatexToHtml(latexContent) {
 // Save document to database
 async function saveDocumentToDatabase(documentId, content) {
   try {
-    await db.execute(
-      'UPDATE documents SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [content, documentId]
-    );
+    await updateDocument(documentId, content);
   } catch (error) {
     console.error('Error saving document:', error);
   }

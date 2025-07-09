@@ -12,6 +12,8 @@ A real-time collaborative LaTeX editor that allows multiple users to edit docume
 - ✅ **Shareable Links**: Share document links with others
 - ✅ **No User Registration**: Jump right in without creating accounts
 - ✅ **Auto-save**: Documents are automatically saved every 30 seconds
+- ✅ **In-Memory Fallback**: Works without database for development/testing
+- ✅ **Auto-Compile Control**: Click ⚡ Auto button to enable/disable
 
 ## Prerequisites
 

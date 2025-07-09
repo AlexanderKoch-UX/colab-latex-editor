@@ -16,6 +16,10 @@ class LatexEditor {
         this.currentPassword = null;
         this.isConnected = false;
         this.usersOnline = new Set();
+        this.autoCompileEnabled = false;
+        this.autoCompileTimeout = null;
+        this.autoCompileDelay = 2000; // 2 seconds delay after last change
+        this.autoCompileCountdown = null;
         
         this.initializeElements();
         this.setupEventListeners();
@@ -41,6 +45,7 @@ class LatexEditor {
         // Buttons
         this.createDocBtn = document.getElementById('create-doc-btn');
         this.joinDocBtn = document.getElementById('join-doc-btn');
+        this.autoCompileBtn = document.getElementById('auto-compile-btn');
         this.compileBtn = document.getElementById('compile-btn');
         this.downloadBtn = document.getElementById('download-btn');
         this.backHomeBtn = document.getElementById('back-home-btn');
@@ -72,6 +77,7 @@ class LatexEditor {
         // Button events
         this.createDocBtn.onclick = () => this.showModal(this.createModal);
         this.joinDocBtn.onclick = () => this.joinDocument();
+        this.autoCompileBtn.onclick = () => this.toggleAutoCompile();
         this.compileBtn.onclick = () => this.compileDocument();
         this.downloadBtn.onclick = () => this.downloadPDF();
         this.backHomeBtn.onclick = () => this.goHome();
@@ -397,6 +403,9 @@ Write your content here...
                         content,
                         operation: changeObj
                     });
+                    
+                    // Handle auto-compile
+                    this.handleAutoCompile();
                 }
             });
             
@@ -429,6 +438,16 @@ Write your content here...
             return;
         }
         
+        // Cancel any pending auto-compile
+        if (this.autoCompileTimeout) {
+            clearTimeout(this.autoCompileTimeout);
+            this.autoCompileTimeout = null;
+        }
+        if (this.autoCompileCountdown) {
+            clearInterval(this.autoCompileCountdown);
+            this.autoCompileCountdown = null;
+        }
+        
         console.log('Starting compilation...');
         this.compileBtn.disabled = true;
         this.compileBtn.textContent = 'Compiling...';
@@ -454,6 +473,82 @@ Write your content here...
         });
         
         console.log('Compile request sent');
+    }
+
+    toggleAutoCompile() {
+        this.autoCompileEnabled = !this.autoCompileEnabled;
+        
+        if (this.autoCompileEnabled) {
+            this.autoCompileBtn.classList.add('active');
+            this.autoCompileBtn.title = 'Auto-compile enabled - PDF will update automatically';
+            this.showToast('Auto-compile enabled', 'success');
+        } else {
+            this.autoCompileBtn.classList.remove('active');
+            this.autoCompileBtn.title = 'Auto-compile disabled - Click to enable';
+            this.showToast('Auto-compile disabled', 'info');
+            
+            // Clear any pending auto-compile
+            if (this.autoCompileTimeout) {
+                clearTimeout(this.autoCompileTimeout);
+                this.autoCompileTimeout = null;
+            }
+            if (this.autoCompileCountdown) {
+                clearInterval(this.autoCompileCountdown);
+                this.autoCompileCountdown = null;
+            }
+            
+            // Reset compile status
+            if (this.compileStatus) {
+                this.compileStatus.textContent = 'Ready to compile';
+                this.compileStatus.className = 'compile-status';
+            }
+        }
+        
+        console.log('Auto-compile toggled:', this.autoCompileEnabled);
+    }
+
+    handleAutoCompile() {
+        if (!this.autoCompileEnabled) {
+            return;
+        }
+        
+        // Clear existing timeouts
+        if (this.autoCompileTimeout) {
+            clearTimeout(this.autoCompileTimeout);
+        }
+        if (this.autoCompileCountdown) {
+            clearInterval(this.autoCompileCountdown);
+        }
+        
+        // Start countdown display
+        let remainingTime = this.autoCompileDelay / 1000;
+        
+        const updateCountdown = () => {
+            if (this.compileStatus && this.autoCompileEnabled) {
+                this.compileStatus.textContent = `Auto-compile in ${remainingTime}s...`;
+                this.compileStatus.className = 'compile-status pending';
+            }
+            remainingTime--;
+        };
+        
+        // Initial countdown display
+        updateCountdown();
+        
+        // Update countdown every second
+        this.autoCompileCountdown = setInterval(updateCountdown, 1000);
+        
+        // Set timeout for actual compilation
+        this.autoCompileTimeout = setTimeout(() => {
+            if (this.autoCompileCountdown) {
+                clearInterval(this.autoCompileCountdown);
+                this.autoCompileCountdown = null;
+            }
+            
+            if (this.autoCompileEnabled) {
+                console.log('Auto-compiling document...');
+                this.compileDocument();
+            }
+        }, this.autoCompileDelay);
     }
 
     downloadPDF() {
@@ -485,6 +580,21 @@ Write your content here...
         this.currentDocumentId = null;
         this.currentPassword = null;
         this.usersOnline.clear();
+        
+        // Reset auto-compile state
+        this.autoCompileEnabled = false;
+        if (this.autoCompileTimeout) {
+            clearTimeout(this.autoCompileTimeout);
+            this.autoCompileTimeout = null;
+        }
+        if (this.autoCompileCountdown) {
+            clearInterval(this.autoCompileCountdown);
+            this.autoCompileCountdown = null;
+        }
+        if (this.autoCompileBtn) {
+            this.autoCompileBtn.classList.remove('active');
+            this.autoCompileBtn.title = 'Toggle auto-compile on changes';
+        }
         
         if (this.editor) {
             this.editor.toTextArea();
