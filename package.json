@@ -1,0 +1,35 @@
+{
+  "name": "colab-latex-editor",
+  "version": "1.0.0",
+  "description": "Collaborative LaTeX Editor with Real-time Editing",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "check": "node check-setup.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "mysql2": "^3.6.0",
+    "bcryptjs": "^2.4.3",
+    "uuid": "^9.0.0",
+    "multer": "^1.4.5-lts.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "child_process": "^1.0.2",
+    "fs-extra": "^11.1.1",
+    "path": "^0.12.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "latex",
+    "collaborative",
+    "editor",
+    "real-time"
+  ],
+  "author": "",
+  "license": "MIT"
+}

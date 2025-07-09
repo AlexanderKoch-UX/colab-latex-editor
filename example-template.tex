@@ -1,0 +1,95 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{hyperref}
+
+\title{Collaborative LaTeX Document}
+\author{Your Name}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+
+\section{Introduction}
+
+Welcome to the collaborative LaTeX editor! This is a sample document that demonstrates various LaTeX features.
+
+\section{Mathematical Expressions}
+
+Here are some examples of mathematical expressions:
+
+\subsection{Inline Math}
+The quadratic formula is $x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$.
+
+\subsection{Display Math}
+The integral of $e^x$ is:
+\[
+\int e^x \, dx = e^x + C
+\]
+
+\subsection{Aligned Equations}
+\begin{align}
+f(x) &= x^2 + 2x + 1 \\
+     &= (x + 1)^2
+\end{align}
+
+\section{Lists}
+
+\subsection{Unordered List}
+\begin{itemize}
+    \item First item
+    \item Second item
+    \item Third item
+\end{itemize}
+
+\subsection{Ordered List}
+\begin{enumerate}
+    \item First step
+    \item Second step
+    \item Third step
+\end{enumerate}
+
+\section{Tables}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{|c|c|c|}
+\hline
+Name & Age & City \\
+\hline
+Alice & 25 & New York \\
+Bob & 30 & London \\
+Charlie & 35 & Tokyo \\
+\hline
+\end{tabular}
+\caption{Sample table}
+\label{tab:sample}
+\end{table}
+
+\section{Code}
+
+Here's an example of inline code: \texttt{console.log("Hello World")}.
+
+For code blocks, you can use the verbatim environment:
+\begin{verbatim}
+function fibonacci(n) {
+    if (n <= 1) return n;
+    return fibonacci(n-1) + fibonacci(n-2);
+}
+\end{verbatim}
+
+\section{References}
+
+You can create references to sections, equations, tables, and figures. For example, see Table~\ref{tab:sample}.
+
+\section{Conclusion}
+
+This template provides a good starting point for your collaborative LaTeX documents. Feel free to modify and expand it according to your needs!
+
+\end{document}

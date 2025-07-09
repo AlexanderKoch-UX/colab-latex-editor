@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collaborative LaTeX Editor</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/theme/monokai.min.css" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <!-- Home Screen -->
+        <div id="home-screen" class="screen active">
+            <div class="container">
+                <h1>Collaborative LaTeX Editor</h1>
+                <div class="home-actions">
+                    <button id="create-doc-btn" class="btn btn-primary">Create New Document</button>
+                    <div class="join-section">
+                        <input type="text" id="document-id-input" placeholder="Enter Document ID">
+                        <button id="join-doc-btn" class="btn btn-secondary">Join Document</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Create Document Modal -->
+        <div id="create-modal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2>Create New Document</h2>
+                <form id="create-form">
+                    <div class="form-group">
+                        <label for="doc-title">Document Title:</label>
+                        <input type="text" id="doc-title" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="doc-password">Password (optional):</label>
+                        <input type="password" id="doc-password" placeholder="Leave empty for no password">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Create Document</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Password Modal -->
+        <div id="password-modal" class="modal">
+            <div class="modal-content">
+                <h2>Enter Password</h2>
+                <form id="password-form">
+                    <div class="form-group">
+                        <label for="password-input">Password:</label>
+                        <input type="password" id="password-input" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Join</button>
+                    <button type="button" id="cancel-join" class="btn btn-secondary">Cancel</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Editor Screen -->
+        <div id="editor-screen" class="screen">
+            <div class="editor-header">
+                <div class="header-left">
+                    <h2 id="document-title">Untitled Document</h2>
+                    <div class="document-info">
+                        <span id="document-id-display"></span>
+                        <button id="copy-link-btn" class="btn btn-small">Copy Link</button>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <button id="compile-btn" class="btn btn-primary">Compile PDF</button>
+                    <button id="download-btn" class="btn btn-secondary" style="display: none;">Download PDF</button>
+                    <button id="back-home-btn" class="btn btn-secondary">Back to Home</button>
+                </div>
+            </div>
+
+            <div class="editor-container">
+                <div class="editor-panel">
+                    <div class="panel-header">
+                        <h3>LaTeX Editor</h3>
+                        <div class="users-online">
+                            <span id="users-count">1 user online</span>
+                        </div>
+                    </div>
+                    <textarea id="latex-editor"></textarea>
+                </div>
+
+                <div class="preview-panel">
+                    <div class="panel-header">
+                        <h3>PDF Preview</h3>
+                        <div class="compile-status">
+                            <span id="compile-status">Ready to compile</span>
+                        </div>
+                    </div>
+                    <div id="pdf-container">
+                        <div class="pdf-placeholder">
+                            <p>Click "Compile PDF" to generate preview</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading Screen -->
+        <div id="loading-screen" class="screen">
+            <div class="loading-spinner"></div>
+            <p>Loading...</p>
+        </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div id="toast-container"></div>
+
+    <!-- Scripts -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/mode/stex/stex.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
