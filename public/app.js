@@ -21,9 +21,15 @@ class LatexEditor {
         this.autoCompileDelay = 2000; // 2 seconds delay after last change
         this.autoCompileCountdown = null;
         
+        // AI Chat properties
+        this.aiChatOpen = false;
+        this.currentAiSuggestion = null;
+        this.originalContent = null;
+        
         this.initializeElements();
         this.setupEventListeners();
         this.setupSocketListeners();
+        this.setupAiChatListeners();
         this.checkUrlForDocument();
     }
 
@@ -67,6 +73,23 @@ class LatexEditor {
         this.usersCount = document.getElementById('users-count');
         this.compileStatus = document.getElementById('compile-status');
         this.pdfContainer = document.getElementById('pdf-container');
+        
+        // AI Chat elements
+        this.aiChatFab = document.getElementById('ai-chat-fab');
+        this.aiChatPanel = document.getElementById('ai-chat-panel');
+        this.aiChatClose = document.getElementById('ai-chat-close');
+        this.aiChatMessages = document.getElementById('ai-chat-messages');
+        this.aiChatInput = document.getElementById('ai-chat-input');
+        this.aiChatSend = document.getElementById('ai-chat-send');
+        
+        // AI Diff elements
+        this.aiDiffModal = document.getElementById('ai-diff-modal');
+        this.aiDiffClose = document.getElementById('ai-diff-close');
+        this.aiDiffDescriptionText = document.getElementById('ai-diff-description-text');
+        this.aiDiffOriginal = document.getElementById('ai-diff-original');
+        this.aiDiffSuggested = document.getElementById('ai-diff-suggested');
+        this.aiDiffApprove = document.getElementById('ai-diff-approve');
+        this.aiDiffDecline = document.getElementById('ai-diff-decline');
     }
 
     setupEventListeners() {
@@ -722,6 +745,228 @@ Write your content here...
             toast.classList.remove('show');
             setTimeout(() => toast.remove(), 300);
         }, 5000);
+    }
+
+    // AI Chat functionality
+    setupAiChatListeners() {
+        // FAB click to toggle chat
+        this.aiChatFab.onclick = () => this.toggleAiChat();
+        
+        // Close chat
+        this.aiChatClose.onclick = () => this.closeAiChat();
+        
+        // Send message
+        this.aiChatSend.onclick = () => this.sendAiMessage();
+        
+        // Enter key to send message
+        this.aiChatInput.onkeypress = (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.sendAiMessage();
+            }
+        };
+        
+        // Diff modal controls
+        this.aiDiffClose.onclick = () => this.closeAiDiffModal();
+        this.aiDiffApprove.onclick = () => this.approveAiSuggestion();
+        this.aiDiffDecline.onclick = () => this.declineAiSuggestion();
+        
+        // Close diff modal when clicking outside
+        this.aiDiffModal.onclick = (e) => {
+            if (e.target === this.aiDiffModal) {
+                this.closeAiDiffModal();
+            }
+        };
+    }
+
+    toggleAiChat() {
+        if (this.aiChatOpen) {
+            this.closeAiChat();
+        } else {
+            this.openAiChat();
+        }
+    }
+
+    openAiChat() {
+        this.aiChatPanel.classList.add('active');
+        this.aiChatOpen = true;
+        this.aiChatInput.focus();
+    }
+
+    closeAiChat() {
+        this.aiChatPanel.classList.remove('active');
+        this.aiChatOpen = false;
+    }
+
+    async sendAiMessage() {
+        const message = this.aiChatInput.value.trim();
+        if (!message) return;
+
+        // Add user message to chat
+        this.addChatMessage(message, 'user');
+        this.aiChatInput.value = '';
+
+        // Show loading message
+        const loadingMessage = this.addChatMessage('Denke nach...', 'ai', true);
+
+        try {
+            // Get current document content
+            const currentContent = this.editor ? this.editor.getValue() : '';
+            
+            // Send request to server
+            const response = await fetch('/api/ai-chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: message,
+                    currentContent: currentContent,
+                    documentId: this.currentDocumentId
+                })
+            });
+
+            const data = await response.json();
+
+            // Remove loading message
+            loadingMessage.remove();
+
+            if (data.error) {
+                this.addChatMessage(`Fehler: ${data.error}`, 'ai');
+                return;
+            }
+
+            // Add AI response
+            this.addChatMessage(data.response, 'ai');
+
+            // If there's a suggested change, show diff modal
+            if (data.suggestedContent && data.suggestedContent !== currentContent) {
+                this.showAiDiffModal(data.description || 'AI-Vorschlag', currentContent, data.suggestedContent);
+            }
+
+        } catch (error) {
+            console.error('AI Chat error:', error);
+            loadingMessage.remove();
+            this.addChatMessage('Entschuldigung, es gab einen Fehler bei der Kommunikation mit dem AI-Assistenten.', 'ai');
+        }
+    }
+
+    addChatMessage(content, type, isLoading = false) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `${type}-message${isLoading ? ' loading' : ''}`;
+        
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        contentDiv.innerHTML = content.replace(/\n/g, '<br>');
+        
+        messageDiv.appendChild(contentDiv);
+        this.aiChatMessages.appendChild(messageDiv);
+        
+        // Scroll to bottom
+        this.aiChatMessages.scrollTop = this.aiChatMessages.scrollHeight;
+        
+        return messageDiv;
+    }
+
+    showAiDiffModal(description, originalContent, suggestedContent) {
+        this.currentAiSuggestion = {
+            description: description,
+            original: originalContent,
+            suggested: suggestedContent
+        };
+
+        this.aiDiffDescriptionText.textContent = description;
+        this.aiDiffOriginal.textContent = originalContent;
+        this.aiDiffSuggested.textContent = suggestedContent;
+
+        // Highlight differences
+        this.highlightDifferences();
+
+        this.aiDiffModal.style.display = 'block';
+    }
+
+    highlightDifferences() {
+        const original = this.currentAiSuggestion.original;
+        const suggested = this.currentAiSuggestion.suggested;
+
+        // Simple line-by-line diff
+        const originalLines = original.split('\n');
+        const suggestedLines = suggested.split('\n');
+
+        let originalHtml = '';
+        let suggestedHtml = '';
+
+        const maxLines = Math.max(originalLines.length, suggestedLines.length);
+
+        for (let i = 0; i < maxLines; i++) {
+            const origLine = originalLines[i] || '';
+            const suggLine = suggestedLines[i] || '';
+
+            if (origLine !== suggLine) {
+                if (origLine && !suggLine) {
+                    // Line removed
+                    originalHtml += `<span class="diff-line-removed">${this.escapeHtml(origLine)}</span>\n`;
+                } else if (!origLine && suggLine) {
+                    // Line added
+                    suggestedHtml += `<span class="diff-line-added">${this.escapeHtml(suggLine)}</span>\n`;
+                } else {
+                    // Line modified
+                    originalHtml += `<span class="diff-line-removed">${this.escapeHtml(origLine)}</span>\n`;
+                    suggestedHtml += `<span class="diff-line-added">${this.escapeHtml(suggLine)}</span>\n`;
+                }
+            } else {
+                // Line unchanged
+                originalHtml += this.escapeHtml(origLine) + '\n';
+                suggestedHtml += this.escapeHtml(suggLine) + '\n';
+            }
+        }
+
+        this.aiDiffOriginal.innerHTML = originalHtml;
+        this.aiDiffSuggested.innerHTML = suggestedHtml;
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    closeAiDiffModal() {
+        this.aiDiffModal.style.display = 'none';
+        this.currentAiSuggestion = null;
+    }
+
+    approveAiSuggestion() {
+        if (!this.currentAiSuggestion || !this.editor) return;
+
+        // Store original content for undo
+        this.originalContent = this.currentAiSuggestion.original;
+
+        // Apply the suggested content
+        this.editor.setValue(this.currentAiSuggestion.suggested);
+
+        // Emit content change to other users
+        if (this.currentDocumentId) {
+            this.socket.emit('content-change', {
+                documentId: this.currentDocumentId,
+                content: this.currentAiSuggestion.suggested,
+                operation: 'ai-suggestion-applied'
+            });
+        }
+
+        this.showToast('AI-Vorschlag wurde übernommen. Strg+Z zum Rückgängigmachen.', 'success');
+        this.closeAiDiffModal();
+
+        // Add undo message to chat
+        this.addChatMessage('✅ Änderungen wurden übernommen! Sie können die Änderungen mit Strg+Z rückgängig machen.', 'ai');
+    }
+
+    declineAiSuggestion() {
+        this.showToast('AI-Vorschlag wurde abgelehnt.', 'info');
+        this.closeAiDiffModal();
+        
+        // Add decline message to chat
+        this.addChatMessage('❌ Vorschlag wurde abgelehnt. Kann ich Ihnen auf andere Weise helfen?', 'ai');
     }
 }
 

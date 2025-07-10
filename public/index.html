@@ -116,6 +116,77 @@
     <!-- Toast Notifications -->
     <div id="toast-container"></div>
 
+    <!-- AI Chat Interface -->
+    <div id="ai-chat-fab" class="ai-chat-fab" title="AI Assistant">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2C13.1 2 14 2.9 14 4C14 5.1 13.1 6 12 6C10.9 6 10 5.1 10 4C10 2.9 10.9 2 12 2ZM21 9V7L15 1H5C3.89 1 3 1.89 3 3V19C3 20.1 3.9 21 5 21H11V19H5V3H13V9H21ZM14 15.5L22.5 7L21 5.5L14 12.5L10.5 9L9 10.5L14 15.5Z" fill="currentColor"/>
+        </svg>
+    </div>
+
+    <!-- AI Chat Panel -->
+    <div id="ai-chat-panel" class="ai-chat-panel">
+        <div class="ai-chat-header">
+            <h3>AI LaTeX Assistant</h3>
+            <button id="ai-chat-close" class="ai-chat-close">&times;</button>
+        </div>
+        <div class="ai-chat-messages" id="ai-chat-messages">
+            <div class="ai-message">
+                <div class="message-content">
+                    Hallo! Ich bin Ihr AI LaTeX-Assistent. Ich kann Ihnen bei folgenden Aufgaben helfen:
+                    <ul>
+                        <li>LaTeX-Code verbessern und korrigieren</li>
+                        <li>Vollständige Dokumente basierend auf Beschreibungen erstellen</li>
+                        <li>LaTeX-Syntax erklären und Hilfe geben</li>
+                    </ul>
+                    Wie kann ich Ihnen heute helfen?
+                </div>
+            </div>
+        </div>
+        <div class="ai-chat-input-container">
+            <textarea id="ai-chat-input" placeholder="Beschreiben Sie, was Sie mit Ihrem LaTeX-Dokument machen möchten..." rows="3"></textarea>
+            <button id="ai-chat-send" class="ai-chat-send-btn">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M2.01 21L23 12L2.01 3L2 10L17 12L2 14L2.01 21Z" fill="currentColor"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- AI Diff Modal -->
+    <div id="ai-diff-modal" class="modal ai-diff-modal">
+        <div class="modal-content ai-diff-content">
+            <div class="ai-diff-header">
+                <h2>AI Vorschlag - Änderungen überprüfen</h2>
+                <span class="close" id="ai-diff-close">&times;</span>
+            </div>
+            <div class="ai-diff-description">
+                <p id="ai-diff-description-text"></p>
+            </div>
+            <div class="ai-diff-container">
+                <div class="ai-diff-panel">
+                    <div class="ai-diff-panel-header">
+                        <h4>Aktueller Code</h4>
+                    </div>
+                    <div class="ai-diff-content-panel">
+                        <pre id="ai-diff-original"></pre>
+                    </div>
+                </div>
+                <div class="ai-diff-panel">
+                    <div class="ai-diff-panel-header">
+                        <h4>Vorgeschlagene Änderungen</h4>
+                    </div>
+                    <div class="ai-diff-content-panel">
+                        <pre id="ai-diff-suggested"></pre>
+                    </div>
+                </div>
+            </div>
+            <div class="ai-diff-actions">
+                <button id="ai-diff-approve" class="btn btn-primary">Änderungen übernehmen</button>
+                <button id="ai-diff-decline" class="btn btn-secondary">Ablehnen</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.2/codemirror.min.js"></script>

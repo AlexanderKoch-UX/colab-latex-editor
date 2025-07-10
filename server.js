@@ -8,6 +8,7 @@ const fs = require('fs-extra');
 const path = require('path');
 const { exec } = require('child_process');
 const cors = require('cors');
+const Groq = require('groq-sdk');
 require('dotenv').config();
 
 const app = express();
@@ -17,6 +18,11 @@ const io = socketIo(server, {
     origin: "*",
     methods: ["GET", "POST"]
   }
+});
+
+// Initialize Groq
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY
 });
 
 // Middleware
@@ -32,15 +38,24 @@ let inMemoryDocuments = new Map();
 
 async function initDatabase() {
   try {
-    db = await mysql.createConnection({
+    // Create connection pool instead of single connection
+    db = mysql.createPool({
       host: process.env.DB_HOST,
       port: process.env.DB_PORT,
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME
+      database: process.env.DB_NAME,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0,
+      acquireTimeout: 60000,
+      timeout: 60000,
+      reconnect: true,
+      idleTimeout: 300000,
+      maxIdle: 10
     });
     
-    // Create tables if they don't exist
+    // Test the connection and create tables if they don't exist
     await db.execute(`
       CREATE TABLE IF NOT EXISTS documents (
         id VARCHAR(36) PRIMARY KEY,
@@ -52,7 +67,7 @@ async function initDatabase() {
       )
     `);
     
-    console.log('Database connected and tables created');
+    console.log('Database pool created and tables created');
   } catch (error) {
     console.warn('Database connection failed, using in-memory storage:', error.message);
     useInMemoryStorage = true;
@@ -72,10 +87,24 @@ async function createDocument(id, title, content, passwordHash) {
       updated_at: new Date()
     });
   } else {
-    await db.execute(
-      'INSERT INTO documents (id, title, content, password_hash) VALUES (?, ?, ?, ?)',
-      [id, title, content || '', passwordHash]
-    );
+    try {
+      await db.execute(
+        'INSERT INTO documents (id, title, content, password_hash) VALUES (?, ?, ?, ?)',
+        [id, title, content || '', passwordHash]
+      );
+    } catch (error) {
+      console.error('Database error in createDocument, falling back to in-memory storage:', error.message);
+      // Fallback to in-memory storage for this operation
+      inMemoryDocuments.set(id, {
+        id,
+        title,
+        content: content || '',
+        password_hash: passwordHash,
+        created_at: new Date(),
+        updated_at: new Date()
+      });
+      // Don't switch globally to in-memory storage, just handle this one operation
+    }
   }
 }
 
@@ -83,11 +112,17 @@ async function getDocument(id) {
   if (useInMemoryStorage) {
     return inMemoryDocuments.get(id);
   } else {
-    const [rows] = await db.execute(
-      'SELECT * FROM documents WHERE id = ?',
-      [id]
-    );
-    return rows[0];
+    try {
+      const [rows] = await db.execute(
+        'SELECT * FROM documents WHERE id = ?',
+        [id]
+      );
+      return rows[0];
+    } catch (error) {
+      console.error('Database error in getDocument, checking in-memory storage:', error.message);
+      // Fallback to in-memory storage for this operation
+      return inMemoryDocuments.get(id);
+    }
   }
 }
 
@@ -99,12 +134,54 @@ async function updateDocument(id, content) {
       doc.updated_at = new Date();
     }
   } else {
-    await db.execute(
-      'UPDATE documents SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-      [content, id]
-    );
+    try {
+      await db.execute(
+        'UPDATE documents SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [content, id]
+      );
+    } catch (error) {
+      console.error('Database error in updateDocument, updating in-memory storage:', error.message);
+      // Fallback to in-memory storage for this operation
+      const doc = inMemoryDocuments.get(id);
+      if (doc) {
+        doc.content = content;
+        doc.updated_at = new Date();
+      }
+    }
   }
 }
+
+// Database health check and reconnection
+async function checkDatabaseConnection() {
+  if (useInMemoryStorage) {
+    return false;
+  }
+  
+  try {
+    await db.execute('SELECT 1');
+    return true;
+  } catch (error) {
+    console.warn('Database connection lost, attempting to reconnect...');
+    try {
+      // Try to reinitialize the database connection
+      await initDatabase();
+      return !useInMemoryStorage;
+    } catch (reconnectError) {
+      console.error('Failed to reconnect to database:', reconnectError.message);
+      return false;
+    }
+  }
+}
+
+// Periodic database health check
+setInterval(async () => {
+  if (!useInMemoryStorage) {
+    const isConnected = await checkDatabaseConnection();
+    if (!isConnected) {
+      console.log('Database connection check failed');
+    }
+  }
+}, 60000); // Check every minute
 
 // Ensure directories exist
 async function ensureDirectories() {
@@ -287,6 +364,84 @@ app.get('/api/documents/:id', async (req, res) => {
   } catch (error) {
     console.error('Error fetching document:', error);
     res.status(500).json({ error: 'Failed to fetch document' });
+  }
+});
+
+// AI Chat API
+app.post('/api/ai-chat', async (req, res) => {
+  try {
+    const { message, currentContent, documentId } = req.body;
+    
+    if (!process.env.GROQ_API_KEY) {
+      return res.status(500).json({ error: 'Groq API key not configured' });
+    }
+
+    console.log('AI Chat request:', { message, contentLength: currentContent?.length, documentId });
+
+    // Create system prompt for LaTeX assistance
+    const systemPrompt = `Du bist ein erfahrener LaTeX-Experte und Assistent. Du hilfst Benutzern bei:
+
+1. LaTeX-Code-Verbesserungen und -Korrekturen
+2. Vollständige LaTeX-Dokument-Generierung basierend auf Beschreibungen
+3. LaTeX-Syntax-Hilfe und Erklärungen
+
+Wenn du Änderungen am LaTeX-Code vorschlägst:
+- Gib eine klare Erklärung, was du änderst und warum
+- Stelle sicher, dass der Code syntaktisch korrekt ist
+- Verwende bewährte LaTeX-Praktiken
+- Behalte die Struktur und den Stil des ursprünglichen Dokuments bei, wenn möglich
+
+Antworte auf Deutsch und sei hilfreich und präzise.`;
+
+    // Create user prompt with context
+    let userPrompt = `Aktueller LaTeX-Code:\n\`\`\`latex\n${currentContent || 'Kein Code vorhanden'}\n\`\`\`\n\nBenutzeranfrage: ${message}`;
+
+    // Call Groq API
+    const completion = await groq.chat.completions.create({
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      model: 'llama-3.3-70b-versatile',
+      temperature: 0.3,
+      max_tokens: 2048
+    });
+
+    const aiResponse = completion.choices[0]?.message?.content;
+    
+    if (!aiResponse) {
+      return res.status(500).json({ error: 'No response from AI' });
+    }
+
+    console.log('AI Response received, length:', aiResponse.length);
+
+    // Check if the response contains LaTeX code suggestions
+    const latexCodeMatch = aiResponse.match(/```latex\n([\s\S]*?)\n```/);
+    let suggestedContent = null;
+    let description = aiResponse;
+
+    if (latexCodeMatch) {
+      suggestedContent = latexCodeMatch[1];
+      // Remove the code block from the description
+      description = aiResponse.replace(/```latex\n[\s\S]*?\n```/, '').trim();
+      
+      // If description is empty after removing code, create a generic one
+      if (!description) {
+        description = 'AI-Vorschlag für Ihren LaTeX-Code';
+      }
+    }
+
+    res.json({
+      response: aiResponse,
+      suggestedContent: suggestedContent,
+      description: description
+    });
+
+  } catch (error) {
+    console.error('AI Chat error:', error);
+    res.status(500).json({ 
+      error: error.message || 'Failed to process AI request' 
+    });
   }
 });
 
@@ -665,3 +820,56 @@ async function startServer() {
 }
 
 startServer().catch(console.error);
+
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('Received SIGINT, shutting down gracefully...');
+  
+  // Save all active documents
+  for (const [documentId, doc] of activeDocuments.entries()) {
+    try {
+      await saveDocumentToDatabase(documentId, doc.content);
+      console.log(`Saved document ${documentId} before shutdown`);
+    } catch (error) {
+      console.error(`Failed to save document ${documentId}:`, error.message);
+    }
+  }
+  
+  // Close database connection
+  if (db && !useInMemoryStorage) {
+    try {
+      await db.end();
+      console.log('Database connection closed');
+    } catch (error) {
+      console.error('Error closing database connection:', error.message);
+    }
+  }
+  
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('Received SIGTERM, shutting down gracefully...');
+  
+  // Save all active documents
+  for (const [documentId, doc] of activeDocuments.entries()) {
+    try {
+      await saveDocumentToDatabase(documentId, doc.content);
+      console.log(`Saved document ${documentId} before shutdown`);
+    } catch (error) {
+      console.error(`Failed to save document ${documentId}:`, error.message);
+    }
+  }
+  
+  // Close database connection
+  if (db && !useInMemoryStorage) {
+    try {
+      await db.end();
+      console.log('Database connection closed');
+    } catch (error) {
+      console.error('Error closing database connection:', error.message);
+    }
+  }
+  
+  process.exit(0);
+});
