@@ -1,7 +1,7 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-const mysql = require('mysql2/promise');
+const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const fs = require('fs-extra');
@@ -33,153 +33,116 @@ app.use('/downloads', express.static('downloads'));
 
 // Database connection
 let db;
-let useInMemoryStorage = false;
-let inMemoryDocuments = new Map();
 
 async function initDatabase() {
-  try {
-    // Create connection pool instead of single connection
-    db = mysql.createPool({
-      host: process.env.DB_HOST,
-      port: process.env.DB_PORT,
-      user: process.env.DB_USER,
-      password: process.env.DB_PASSWORD,
-      database: process.env.DB_NAME,
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      acquireTimeout: 60000,
-      timeout: 60000,
-      reconnect: true,
-      idleTimeout: 300000,
-      maxIdle: 10
+  return new Promise((resolve, reject) => {
+    // Create SQLite database file in the project directory
+    db = new sqlite3.Database('./documents.db', (err) => {
+      if (err) {
+        console.error('Error opening SQLite database:', err.message);
+        reject(err);
+        return;
+      }
+      
+      console.log('Connected to SQLite database');
+      
+      // Create documents table if it doesn't exist
+      db.run(`
+        CREATE TABLE IF NOT EXISTS documents (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          content TEXT,
+          password_hash TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `, (err) => {
+        if (err) {
+          console.error('Error creating documents table:', err.message);
+          reject(err);
+          return;
+        }
+        
+        console.log('Documents table ready');
+        resolve();
+      });
     });
-    
-    // Test the connection and create tables if they don't exist
-    await db.execute(`
-      CREATE TABLE IF NOT EXISTS documents (
-        id VARCHAR(36) PRIMARY KEY,
-        title VARCHAR(255) NOT NULL,
-        content TEXT,
-        password_hash VARCHAR(255),
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-      )
-    `);
-    
-    console.log('Database pool created and tables created');
-  } catch (error) {
-    console.warn('Database connection failed, using in-memory storage:', error.message);
-    useInMemoryStorage = true;
-    console.log('In-memory storage initialized');
-  }
+  });
 }
 
 // Helper functions for database operations
 async function createDocument(id, title, content, passwordHash) {
-  if (useInMemoryStorage) {
-    inMemoryDocuments.set(id, {
-      id,
-      title,
-      content: content || '',
-      password_hash: passwordHash,
-      created_at: new Date(),
-      updated_at: new Date()
-    });
-  } else {
-    try {
-      await db.execute(
-        'INSERT INTO documents (id, title, content, password_hash) VALUES (?, ?, ?, ?)',
-        [id, title, content || '', passwordHash]
-      );
-    } catch (error) {
-      console.error('Database error in createDocument, falling back to in-memory storage:', error.message);
-      // Fallback to in-memory storage for this operation
-      inMemoryDocuments.set(id, {
-        id,
-        title,
-        content: content || '',
-        password_hash: passwordHash,
-        created_at: new Date(),
-        updated_at: new Date()
-      });
-      // Don't switch globally to in-memory storage, just handle this one operation
-    }
-  }
+  return new Promise((resolve, reject) => {
+    db.run(
+      'INSERT INTO documents (id, title, content, password_hash) VALUES (?, ?, ?, ?)',
+      [id, title, content || '', passwordHash],
+      function(err) {
+        if (err) {
+          console.error('Error creating document:', err.message);
+          reject(err);
+          return;
+        }
+        console.log('Document created with ID:', id);
+        resolve();
+      }
+    );
+  });
 }
 
 async function getDocument(id) {
-  if (useInMemoryStorage) {
-    return inMemoryDocuments.get(id);
-  } else {
-    try {
-      const [rows] = await db.execute(
-        'SELECT * FROM documents WHERE id = ?',
-        [id]
-      );
-      return rows[0];
-    } catch (error) {
-      console.error('Database error in getDocument, checking in-memory storage:', error.message);
-      // Fallback to in-memory storage for this operation
-      return inMemoryDocuments.get(id);
-    }
-  }
+  return new Promise((resolve, reject) => {
+    db.get(
+      'SELECT * FROM documents WHERE id = ?',
+      [id],
+      (err, row) => {
+        if (err) {
+          console.error('Error getting document:', err.message);
+          reject(err);
+          return;
+        }
+        resolve(row);
+      }
+    );
+  });
 }
 
 async function updateDocument(id, content) {
-  if (useInMemoryStorage) {
-    const doc = inMemoryDocuments.get(id);
-    if (doc) {
-      doc.content = content;
-      doc.updated_at = new Date();
-    }
-  } else {
-    try {
-      await db.execute(
-        'UPDATE documents SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-        [content, id]
-      );
-    } catch (error) {
-      console.error('Database error in updateDocument, updating in-memory storage:', error.message);
-      // Fallback to in-memory storage for this operation
-      const doc = inMemoryDocuments.get(id);
-      if (doc) {
-        doc.content = content;
-        doc.updated_at = new Date();
+  return new Promise((resolve, reject) => {
+    db.run(
+      'UPDATE documents SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [content, id],
+      function(err) {
+        if (err) {
+          console.error('Error updating document:', err.message);
+          reject(err);
+          return;
+        }
+        console.log('Document updated:', id);
+        resolve();
       }
-    }
-  }
+    );
+  });
 }
 
-// Database health check and reconnection
+// Database health check
 async function checkDatabaseConnection() {
-  if (useInMemoryStorage) {
-    return false;
-  }
-  
-  try {
-    await db.execute('SELECT 1');
-    return true;
-  } catch (error) {
-    console.warn('Database connection lost, attempting to reconnect...');
-    try {
-      // Try to reinitialize the database connection
-      await initDatabase();
-      return !useInMemoryStorage;
-    } catch (reconnectError) {
-      console.error('Failed to reconnect to database:', reconnectError.message);
-      return false;
-    }
-  }
+  return new Promise((resolve) => {
+    db.get('SELECT 1', (err) => {
+      if (err) {
+        console.warn('Database connection check failed:', err.message);
+        resolve(false);
+      } else {
+        resolve(true);
+      }
+    });
+  });
 }
 
 // Periodic database health check
 setInterval(async () => {
-  if (!useInMemoryStorage) {
-    const isConnected = await checkDatabaseConnection();
-    if (!isConnected) {
-      console.log('Database connection check failed');
-    }
+  const isConnected = await checkDatabaseConnection();
+  if (!isConnected) {
+    console.log('Database connection check failed');
   }
 }, 60000); // Check every minute
 
@@ -836,16 +799,18 @@ process.on('SIGINT', async () => {
   }
   
   // Close database connection
-  if (db && !useInMemoryStorage) {
-    try {
-      await db.end();
-      console.log('Database connection closed');
-    } catch (error) {
-      console.error('Error closing database connection:', error.message);
-    }
+  if (db) {
+    db.close((err) => {
+      if (err) {
+        console.error('Error closing database connection:', err.message);
+      } else {
+        console.log('Database connection closed');
+      }
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
   }
-  
-  process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
@@ -862,14 +827,16 @@ process.on('SIGTERM', async () => {
   }
   
   // Close database connection
-  if (db && !useInMemoryStorage) {
-    try {
-      await db.end();
-      console.log('Database connection closed');
-    } catch (error) {
-      console.error('Error closing database connection:', error.message);
-    }
+  if (db) {
+    db.close((err) => {
+      if (err) {
+        console.error('Error closing database connection:', err.message);
+      } else {
+        console.log('Database connection closed');
+      }
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
   }
-  
-  process.exit(0);
 });
