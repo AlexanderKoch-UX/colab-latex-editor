@@ -58,6 +58,31 @@
             </div>
         </div>
 
+        <!-- Set Password Modal -->
+        <div id="set-password-modal" class="modal">
+            <div class="modal-content">
+                <span class="close">&times;</span>
+                <h2>Set Document Password</h2>
+                <p class="modal-description">Set or change the password for this document. Leave empty to remove password protection.</p>
+                <form id="set-password-form">
+                    <div class="form-group">
+                        <label for="current-password-input">Current Password (if any):</label>
+                        <input type="password" id="current-password-input" placeholder="Leave empty if no current password">
+                    </div>
+                    <div class="form-group">
+                        <label for="new-password-input">New Password:</label>
+                        <input type="password" id="new-password-input" placeholder="Leave empty to remove password protection">
+                    </div>
+                    <div class="form-group">
+                        <label for="confirm-password-input">Confirm New Password:</label>
+                        <input type="password" id="confirm-password-input" placeholder="Confirm new password">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Update Password</button>
+                    <button type="button" id="cancel-set-password" class="btn btn-secondary">Cancel</button>
+                </form>
+            </div>
+        </div>
+
         <!-- Editor Screen -->
         <div id="editor-screen" class="screen">
             <div class="editor-header">
@@ -69,6 +94,10 @@
                     </div>
                 </div>
                 <div class="header-right">
+                    <button id="set-password-btn" class="btn btn-secondary" title="Set or change document password">
+                        <span>🔒</span>
+                        <span>Set Password</span>
+                    </button>
                     <button id="auto-compile-btn" class="btn btn-toggle" title="Toggle auto-compile on changes">
                         <span class="toggle-icon">⚡</span>
                         <span class="toggle-text">Auto</span>

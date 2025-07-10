@@ -124,6 +124,24 @@ async function updateDocument(id, content) {
   });
 }
 
+async function updateDocumentPassword(id, passwordHash) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      'UPDATE documents SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+      [passwordHash, id],
+      function(err) {
+        if (err) {
+          console.error('Error updating document password:', err.message);
+          reject(err);
+          return;
+        }
+        console.log('Document password updated:', id);
+        resolve();
+      }
+    );
+  });
+}
+
 // Database health check
 async function checkDatabaseConnection() {
   return new Promise((resolve) => {
@@ -211,7 +229,8 @@ io.on('connection', (socket) => {
       // Send current document content
       const contentToSend = {
         content: activeDocuments.get(documentId).content,
-        title: document.title
+        title: document.title,
+        hasPassword: !!document.password_hash
       };
       console.log('Sending document content to user:', contentToSend);
       socket.emit('document-content', contentToSend);
@@ -327,6 +346,49 @@ app.get('/api/documents/:id', async (req, res) => {
   } catch (error) {
     console.error('Error fetching document:', error);
     res.status(500).json({ error: 'Failed to fetch document' });
+  }
+});
+
+// Update document password
+app.put('/api/documents/:id/password', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { currentPassword, newPassword } = req.body;
+    
+    console.log('Password update request for document:', id);
+    
+    // Get the document
+    const document = await getDocument(id);
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    
+    // Check current password if document is protected
+    if (document.password_hash) {
+      if (!currentPassword || !await bcrypt.compare(currentPassword, document.password_hash)) {
+        console.log('Invalid current password for document:', id);
+        return res.status(401).json({ error: 'Invalid current password' });
+      }
+    }
+    
+    // Hash new password if provided
+    let newPasswordHash = null;
+    if (newPassword) {
+      newPasswordHash = await bcrypt.hash(newPassword, 10);
+    }
+    
+    // Update password in database
+    await updateDocumentPassword(id, newPasswordHash);
+    
+    console.log('Password updated successfully for document:', id);
+    res.json({ 
+      success: true, 
+      message: newPassword ? 'Password set successfully' : 'Password removed successfully' 
+    });
+    
+  } catch (error) {
+    console.error('Error updating document password:', error);
+    res.status(500).json({ error: 'Failed to update password' });
   }
 });
 

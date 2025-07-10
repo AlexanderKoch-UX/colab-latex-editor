@@ -14,6 +14,7 @@ class LatexEditor {
         this.editor = null;
         this.currentDocumentId = null;
         this.currentPassword = null;
+        this.documentHasPassword = false;
         this.isConnected = false;
         this.usersOnline = new Set();
         this.autoCompileEnabled = false;
@@ -47,10 +48,12 @@ class LatexEditor {
         // Modals
         this.createModal = document.getElementById('create-modal');
         this.passwordModal = document.getElementById('password-modal');
+        this.setPasswordModal = document.getElementById('set-password-modal');
         
         // Buttons
         this.createDocBtn = document.getElementById('create-doc-btn');
         this.joinDocBtn = document.getElementById('join-doc-btn');
+        this.setPasswordBtn = document.getElementById('set-password-btn');
         this.autoCompileBtn = document.getElementById('auto-compile-btn');
         this.compileBtn = document.getElementById('compile-btn');
         this.downloadBtn = document.getElementById('download-btn');
@@ -60,12 +63,16 @@ class LatexEditor {
         // Forms
         this.createForm = document.getElementById('create-form');
         this.passwordForm = document.getElementById('password-form');
+        this.setPasswordForm = document.getElementById('set-password-form');
         
         // Inputs
         this.documentIdInput = document.getElementById('document-id-input');
         this.docTitleInput = document.getElementById('doc-title');
         this.docPasswordInput = document.getElementById('doc-password');
         this.passwordInput = document.getElementById('password-input');
+        this.currentPasswordInput = document.getElementById('current-password-input');
+        this.newPasswordInput = document.getElementById('new-password-input');
+        this.confirmPasswordInput = document.getElementById('confirm-password-input');
         
         // Display elements
         this.documentTitle = document.getElementById('document-title');
@@ -94,12 +101,20 @@ class LatexEditor {
 
     setupEventListeners() {
         // Modal controls
-        document.querySelector('.close').onclick = () => this.closeModal(this.createModal);
+        const closeButtons = document.querySelectorAll('.close');
+        closeButtons.forEach(btn => {
+            btn.onclick = (e) => {
+                const modal = e.target.closest('.modal');
+                this.closeModal(modal);
+            };
+        });
         document.getElementById('cancel-join').onclick = () => this.closeModal(this.passwordModal);
+        document.getElementById('cancel-set-password').onclick = () => this.closeModal(this.setPasswordModal);
         
         // Button events
         this.createDocBtn.onclick = () => this.showModal(this.createModal);
         this.joinDocBtn.onclick = () => this.joinDocument();
+        this.setPasswordBtn.onclick = () => this.showSetPasswordModal();
         this.autoCompileBtn.onclick = () => this.toggleAutoCompile();
         this.compileBtn.onclick = () => this.compileDocument();
         this.downloadBtn.onclick = () => this.downloadPDF();
@@ -109,6 +124,7 @@ class LatexEditor {
         // Form submissions
         this.createForm.onsubmit = (e) => this.createDocument(e);
         this.passwordForm.onsubmit = (e) => this.submitPassword(e);
+        this.setPasswordForm.onsubmit = (e) => this.setDocumentPassword(e);
         
         // Enter key for document ID input
         this.documentIdInput.onkeypress = (e) => {
@@ -119,6 +135,7 @@ class LatexEditor {
         window.onclick = (e) => {
             if (e.target === this.createModal) this.closeModal(this.createModal);
             if (e.target === this.passwordModal) this.closeModal(this.passwordModal);
+            if (e.target === this.setPasswordModal) this.closeModal(this.setPasswordModal);
         };
     }
 
@@ -165,6 +182,9 @@ class LatexEditor {
                         console.log('Document ID set to:', this.currentDocumentId);
                     }
                     
+                    // Set password status
+                    this.documentHasPassword = data.hasPassword || false;
+                    
                     // Initialize or update editor
                     if (this.editor) {
                         console.log('Updating existing editor');
@@ -177,6 +197,9 @@ class LatexEditor {
                     // Update user count
                     this.usersOnline.add(this.socket.id);
                     this.updateUsersCount();
+                    
+                    // Update password button text
+                    this.updatePasswordButtonText();
                     
                     console.log('=== DOCUMENT SETUP COMPLETE ===');
                 }, 200);
@@ -348,6 +371,99 @@ class LatexEditor {
         this.closeModal(this.passwordModal);
         this.showLoading();
         this.joinDocumentWithId(this.currentDocumentId, password);
+    }
+
+    showSetPasswordModal() {
+        if (!this.currentDocumentId) {
+            this.showToast('No document is currently open', 'error');
+            return;
+        }
+        
+        // Clear form fields
+        this.currentPasswordInput.value = '';
+        this.newPasswordInput.value = '';
+        this.confirmPasswordInput.value = '';
+        
+        this.showModal(this.setPasswordModal);
+    }
+
+    async setDocumentPassword(e) {
+        e.preventDefault();
+        
+        const currentPassword = this.currentPasswordInput.value.trim();
+        const newPassword = this.newPasswordInput.value.trim();
+        const confirmPassword = this.confirmPasswordInput.value.trim();
+        
+        // Validate passwords match if new password is provided
+        if (newPassword && newPassword !== confirmPassword) {
+            this.showToast('New passwords do not match', 'error');
+            return;
+        }
+        
+        if (!this.currentDocumentId) {
+            this.showToast('No document is currently open', 'error');
+            return;
+        }
+        
+        // Show loading state on the submit button
+        const submitBtn = this.setPasswordForm.querySelector('button[type="submit"]');
+        const originalText = submitBtn.textContent;
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Updating...';
+        
+        try {
+            const response = await fetch(`/api/documents/${this.currentDocumentId}/password`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    currentPassword: currentPassword || null,
+                    newPassword: newPassword || null
+                })
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok) {
+                this.closeModal(this.setPasswordModal);
+                
+                if (newPassword) {
+                    this.showToast('Document password has been set successfully', 'success');
+                    this.currentPassword = newPassword;
+                    this.documentHasPassword = true;
+                } else {
+                    this.showToast('Document password has been removed successfully', 'success');
+                    this.currentPassword = null;
+                    this.documentHasPassword = false;
+                }
+                
+                // Update button text to reflect password status
+                this.updatePasswordButtonText();
+                
+            } else {
+                throw new Error(data.error || 'Failed to update password');
+            }
+        } catch (error) {
+            console.error('Error setting password:', error);
+            this.showToast(`Error: ${error.message}`, 'error');
+        } finally {
+            // Reset submit button
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalText;
+        }
+    }
+
+    updatePasswordButtonText() {
+        if (this.setPasswordBtn) {
+            if (this.documentHasPassword || this.currentPassword) {
+                this.setPasswordBtn.innerHTML = '<span>🔒</span><span>Change Password</span>';
+                this.setPasswordBtn.title = 'Change or remove document password';
+            } else {
+                this.setPasswordBtn.innerHTML = '<span>🔓</span><span>Set Password</span>';
+                this.setPasswordBtn.title = 'Set document password';
+            }
+        }
     }
 
     initializeCodeMirror(content = '') {
@@ -602,6 +718,7 @@ Write your content here...
     goHome() {
         this.currentDocumentId = null;
         this.currentPassword = null;
+        this.documentHasPassword = false;
         this.usersOnline.clear();
         
         // Reset auto-compile state
@@ -636,6 +753,9 @@ Write your content here...
         this.docPasswordInput.value = '';
         this.documentIdInput.value = '';
         this.passwordInput.value = '';
+        
+        // Reset password button
+        this.updatePasswordButtonText();
     }
 
     showEditor() {
