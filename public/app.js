@@ -17,6 +17,13 @@ class LatexEditor {
         this.documentHasPassword = false;
         this.isConnected = false;
         this.usersOnline = new Set();
+        
+        // Version management
+        this.versionHistory = [];
+        this.versionIndex = -1;
+        this.isRestoringVersion = false;
+        this.lastSavedContent = '';
+        this.versionSaveTimer = null;
         this.autoCompileEnabled = false;
         this.autoCompileTimeout = null;
         this.autoCompileDelay = 2000; // 2 seconds delay after last change
@@ -184,6 +191,18 @@ class LatexEditor {
                     
                     // Set password status
                     this.documentHasPassword = data.hasPassword || false;
+                    
+                    // Load document versions for undo/redo
+                    this.versionHistory = data.versions || [];
+                    this.versionIndex = -1; // -1 means current content
+                    this.lastSavedContent = data.content;
+                    
+                    // Save initial version if we have content
+                    if (data.content && data.content.trim()) {
+                        setTimeout(() => {
+                            this.saveCurrentVersion();
+                        }, 1000);
+                    }
                     
                     // Initialize or update editor
                     if (this.editor) {
@@ -466,6 +485,105 @@ class LatexEditor {
         }
     }
 
+    // Version management methods
+    saveCurrentVersion() {
+        if (!this.editor || this.isRestoringVersion) return;
+        
+        const currentContent = this.editor.getValue();
+        
+        // Don't save if content hasn't changed significantly
+        if (currentContent === this.lastSavedContent) return;
+        
+        // Add current content to version history
+        this.versionHistory.unshift({
+            id: Date.now(),
+            content: currentContent,
+            changeDescription: 'User edit',
+            createdAt: new Date().toISOString()
+        });
+        
+        // Keep only last 50 versions in memory
+        if (this.versionHistory.length > 50) {
+            this.versionHistory = this.versionHistory.slice(0, 50);
+        }
+        
+        this.lastSavedContent = currentContent;
+        this.versionIndex = -1; // Reset to current
+        
+        console.log('Version saved, total versions:', this.versionHistory.length);
+    }
+
+    async performUndo() {
+        if (!this.editor || !this.currentDocumentId) return;
+        
+        console.log('Performing undo, current version index:', this.versionIndex);
+        
+        // If we're at current content, save it first
+        if (this.versionIndex === -1 && this.versionHistory.length > 0) {
+            this.versionIndex = 0;
+        } else if (this.versionIndex < this.versionHistory.length - 1) {
+            this.versionIndex++;
+        } else {
+            this.showToast('No more versions to undo', 'info');
+            return;
+        }
+        
+        const version = this.versionHistory[this.versionIndex];
+        if (version) {
+            this.isRestoringVersion = true;
+            this.editor.setValue(version.content);
+            this.isRestoringVersion = false;
+            
+            this.showToast(`Undo: ${version.changeDescription}`, 'info');
+            console.log('Restored to version index:', this.versionIndex);
+        }
+    }
+
+    async performRedo() {
+        if (!this.editor || !this.currentDocumentId) return;
+        
+        console.log('Performing redo, current version index:', this.versionIndex);
+        
+        if (this.versionIndex > 0) {
+            this.versionIndex--;
+            const version = this.versionHistory[this.versionIndex];
+            
+            this.isRestoringVersion = true;
+            this.editor.setValue(version.content);
+            this.isRestoringVersion = false;
+            
+            this.showToast(`Redo: ${version.changeDescription}`, 'info');
+            console.log('Restored to version index:', this.versionIndex);
+        } else if (this.versionIndex === 0) {
+            // Go back to current content
+            this.versionIndex = -1;
+            this.isRestoringVersion = true;
+            this.editor.setValue(this.lastSavedContent);
+            this.isRestoringVersion = false;
+            
+            this.showToast('Redo: Back to current version', 'info');
+        } else {
+            this.showToast('No more versions to redo', 'info');
+        }
+    }
+
+    async refreshVersionHistory() {
+        if (!this.currentDocumentId) return;
+        
+        try {
+            const response = await fetch(`/api/documents/${this.currentDocumentId}/versions?limit=20`);
+            const data = await response.json();
+            
+            if (response.ok) {
+                this.versionHistory = data.versions || [];
+                this.versionIndex = -1;
+                console.log('Version history refreshed:', this.versionHistory.length, 'versions');
+            }
+        } catch (error) {
+            console.error('Error refreshing version history:', error);
+        }
+    }
+
     initializeCodeMirror(content = '') {
         console.log('Initializing CodeMirror with content length:', content.length);
         
@@ -496,7 +614,13 @@ class LatexEditor {
                 tabSize: 2,
                 extraKeys: {
                     'Ctrl-S': () => this.compileDocument(),
-                    'Cmd-S': () => this.compileDocument()
+                    'Cmd-S': () => this.compileDocument(),
+                    'Ctrl-Z': () => this.performUndo(),
+                    'Cmd-Z': () => this.performUndo(),
+                    'Ctrl-Shift-Z': () => this.performRedo(),
+                    'Cmd-Shift-Z': () => this.performRedo(),
+                    'Ctrl-Y': () => this.performRedo(),
+                    'Cmd-Y': () => this.performRedo()
                 }
             });
             
@@ -530,8 +654,21 @@ Write your content here...
             
             // Set up real-time collaboration and auto-save
             this.editor.on('change', (instance, changeObj) => {
-                if (changeObj.origin !== 'setValue' && changeObj.origin !== 'compile') {
+                if (changeObj.origin !== 'setValue' && changeObj.origin !== 'compile' && !this.isRestoringVersion) {
                     const content = instance.getValue();
+                    
+                    // Reset version index when user makes new changes
+                    if (this.versionIndex !== -1) {
+                        this.versionIndex = -1;
+                    }
+                    
+                    // Save version after a delay (debounced)
+                    if (this.versionSaveTimer) {
+                        clearTimeout(this.versionSaveTimer);
+                    }
+                    this.versionSaveTimer = setTimeout(() => {
+                        this.saveCurrentVersion();
+                    }, 3000); // Save version after 3 seconds of inactivity
                     
                     // Show saving indicator
                     this.showSavingIndicator();
@@ -720,6 +857,16 @@ Write your content here...
         this.currentPassword = null;
         this.documentHasPassword = false;
         this.usersOnline.clear();
+        
+        // Reset version management
+        this.versionHistory = [];
+        this.versionIndex = -1;
+        this.isRestoringVersion = false;
+        this.lastSavedContent = '';
+        if (this.versionSaveTimer) {
+            clearTimeout(this.versionSaveTimer);
+            this.versionSaveTimer = null;
+        }
         
         // Reset auto-compile state
         this.autoCompileEnabled = false;
@@ -1059,11 +1206,16 @@ Write your content here...
     approveAiSuggestion() {
         if (!this.currentAiSuggestion || !this.editor) return;
 
-        // Store original content for undo
-        this.originalContent = this.currentAiSuggestion.original;
+        // Save current version before applying AI suggestion
+        this.saveCurrentVersion();
+        
+        // Reset version index when applying AI suggestion
+        this.versionIndex = -1;
 
         // Apply the suggested content
+        this.isRestoringVersion = true;
         this.editor.setValue(this.currentAiSuggestion.suggested);
+        this.isRestoringVersion = false;
 
         // Emit content change to other users
         if (this.currentDocumentId) {

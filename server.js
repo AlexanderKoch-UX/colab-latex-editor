@@ -63,8 +63,27 @@ async function initDatabase() {
           return;
         }
         
-        console.log('Documents table ready');
-        resolve();
+        // Create document_versions table for version history
+        db.run(`
+          CREATE TABLE IF NOT EXISTS document_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id TEXT NOT NULL,
+            content TEXT NOT NULL,
+            change_description TEXT,
+            user_id TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (document_id) REFERENCES documents (id)
+          )
+        `, (err) => {
+          if (err) {
+            console.error('Error creating document_versions table:', err.message);
+            reject(err);
+            return;
+          }
+          
+          console.log('Documents and versions tables ready');
+          resolve();
+        });
       });
     });
   });
@@ -136,6 +155,84 @@ async function updateDocumentPassword(id, passwordHash) {
           return;
         }
         console.log('Document password updated:', id);
+        resolve();
+      }
+    );
+  });
+}
+
+// Version management functions
+async function saveDocumentVersion(documentId, content, changeDescription = 'Auto-save', userId = null) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      'INSERT INTO document_versions (document_id, content, change_description, user_id) VALUES (?, ?, ?, ?)',
+      [documentId, content, changeDescription, userId],
+      function(err) {
+        if (err) {
+          console.error('Error saving document version:', err.message);
+          reject(err);
+          return;
+        }
+        console.log('Document version saved:', documentId, 'Version ID:', this.lastID);
+        resolve(this.lastID);
+      }
+    );
+  });
+}
+
+async function getDocumentVersions(documentId, limit = 50) {
+  return new Promise((resolve, reject) => {
+    db.all(
+      'SELECT * FROM document_versions WHERE document_id = ? ORDER BY created_at DESC LIMIT ?',
+      [documentId, limit],
+      (err, rows) => {
+        if (err) {
+          console.error('Error getting document versions:', err.message);
+          reject(err);
+          return;
+        }
+        resolve(rows || []);
+      }
+    );
+  });
+}
+
+async function getDocumentVersion(versionId) {
+  return new Promise((resolve, reject) => {
+    db.get(
+      'SELECT * FROM document_versions WHERE id = ?',
+      [versionId],
+      (err, row) => {
+        if (err) {
+          console.error('Error getting document version:', err.message);
+          reject(err);
+          return;
+        }
+        resolve(row);
+      }
+    );
+  });
+}
+
+async function cleanupOldVersions(documentId, keepCount = 100) {
+  return new Promise((resolve, reject) => {
+    db.run(
+      `DELETE FROM document_versions 
+       WHERE document_id = ? 
+       AND id NOT IN (
+         SELECT id FROM document_versions 
+         WHERE document_id = ? 
+         ORDER BY created_at DESC 
+         LIMIT ?
+       )`,
+      [documentId, documentId, keepCount],
+      function(err) {
+        if (err) {
+          console.error('Error cleaning up old versions:', err.message);
+          reject(err);
+          return;
+        }
+        console.log('Cleaned up old versions for document:', documentId, 'Deleted:', this.changes);
         resolve();
       }
     );
@@ -226,11 +323,20 @@ io.on('connection', (socket) => {
       // Add user to document
       activeDocuments.get(documentId).users.add(socket.id);
       
-      // Send current document content
+      // Get document versions for undo/redo functionality
+      const versions = await getDocumentVersions(documentId, 20);
+      
+      // Send current document content with version history
       const contentToSend = {
         content: activeDocuments.get(documentId).content,
         title: document.title,
-        hasPassword: !!document.password_hash
+        hasPassword: !!document.password_hash,
+        versions: versions.map(v => ({
+          id: v.id,
+          content: v.content,
+          changeDescription: v.change_description,
+          createdAt: v.created_at
+        }))
       };
       console.log('Sending document content to user:', contentToSend);
       socket.emit('document-content', contentToSend);
@@ -252,8 +358,22 @@ io.on('connection', (socket) => {
     // Update document in memory
     if (activeDocuments.has(documentId)) {
       const doc = activeDocuments.get(documentId);
+      const previousContent = doc.content;
       doc.content = content;
       doc.lastModified = new Date();
+      
+      // Save version if content has significantly changed
+      const shouldSaveVersion = shouldCreateVersion(previousContent, content, operation);
+      if (shouldSaveVersion) {
+        saveDocumentVersion(documentId, content, getChangeDescription(operation), socket.id)
+          .then(() => {
+            // Clean up old versions periodically
+            if (Math.random() < 0.1) { // 10% chance
+              cleanupOldVersions(documentId, 100);
+            }
+          })
+          .catch(err => console.error('Error saving version:', err));
+      }
       
       // Auto-save to database every 5 seconds (debounced)
       clearTimeout(doc.saveTimeout);
@@ -389,6 +509,51 @@ app.put('/api/documents/:id/password', async (req, res) => {
   } catch (error) {
     console.error('Error updating document password:', error);
     res.status(500).json({ error: 'Failed to update password' });
+  }
+});
+
+// Get document versions
+app.get('/api/documents/:id/versions', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const limit = parseInt(req.query.limit) || 20;
+    
+    // Verify document exists
+    const document = await getDocument(id);
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    
+    const versions = await getDocumentVersions(id, limit);
+    res.json({ versions });
+    
+  } catch (error) {
+    console.error('Error fetching document versions:', error);
+    res.status(500).json({ error: 'Failed to fetch versions' });
+  }
+});
+
+// Get specific version content
+app.get('/api/documents/:id/versions/:versionId', async (req, res) => {
+  try {
+    const { id, versionId } = req.params;
+    
+    // Verify document exists
+    const document = await getDocument(id);
+    if (!document) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    
+    const version = await getDocumentVersion(versionId);
+    if (!version || version.document_id !== id) {
+      return res.status(404).json({ error: 'Version not found' });
+    }
+    
+    res.json({ version });
+    
+  } catch (error) {
+    console.error('Error fetching document version:', error);
+    res.status(500).json({ error: 'Failed to fetch version' });
   }
 });
 
@@ -812,6 +977,53 @@ function convertLatexToHtml(latexContent) {
 
 
 
+
+// Helper functions for version management
+function shouldCreateVersion(previousContent, newContent, operation) {
+  // Don't create versions for very small changes or rapid typing
+  if (!previousContent || !newContent) return true;
+  
+  const contentDiff = Math.abs(newContent.length - previousContent.length);
+  const timeSinceLastVersion = Date.now() - (global.lastVersionTime || 0);
+  
+  // Create version if:
+  // 1. Significant content change (more than 50 characters)
+  // 2. Or it's been more than 30 seconds since last version
+  // 3. Or it's a special operation (paste, AI suggestion, etc.)
+  if (contentDiff > 50 || 
+      timeSinceLastVersion > 30000 || 
+      (operation && typeof operation === 'object' && operation.origin === 'paste') ||
+      (operation && operation === 'ai-suggestion-applied')) {
+    global.lastVersionTime = Date.now();
+    return true;
+  }
+  
+  return false;
+}
+
+function getChangeDescription(operation) {
+  if (!operation) return 'Content change';
+  
+  if (typeof operation === 'string') {
+    switch (operation) {
+      case 'ai-suggestion-applied': return 'AI suggestion applied';
+      case 'compile': return 'Document compiled';
+      default: return 'Content change';
+    }
+  }
+  
+  if (typeof operation === 'object' && operation.origin) {
+    switch (operation.origin) {
+      case 'paste': return 'Content pasted';
+      case 'cut': return 'Content cut';
+      case 'undo': return 'Undo operation';
+      case 'redo': return 'Redo operation';
+      default: return 'Content change';
+    }
+  }
+  
+  return 'Content change';
+}
 
 // Save document to database
 async function saveDocumentToDatabase(documentId, content) {
