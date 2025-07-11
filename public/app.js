@@ -38,6 +38,7 @@ class LatexEditor {
         this.setupEventListeners();
         this.setupSocketListeners();
         this.setupAiChatListeners();
+        this.loadRecentDocuments();
         this.checkUrlForDocument();
     }
 
@@ -87,6 +88,7 @@ class LatexEditor {
         this.usersCount = document.getElementById('users-count');
         this.compileStatus = document.getElementById('compile-status');
         this.pdfContainer = document.getElementById('pdf-container');
+        this.recentDocumentsList = document.getElementById('recent-documents-list');
         
         // AI Chat elements
         this.aiChatFab = document.getElementById('ai-chat-fab');
@@ -191,6 +193,9 @@ class LatexEditor {
                     
                     // Set password status
                     this.documentHasPassword = data.hasPassword || false;
+                    
+                    // Save to recent documents when successfully joining
+                    this.saveDocumentToRecent(this.currentDocumentId, data.title, this.documentHasPassword);
                     
                     // Load document versions for undo/redo
                     this.versionHistory = data.versions || [];
@@ -326,6 +331,10 @@ class LatexEditor {
                 this.currentPassword = password || null;
                 this.closeModal(this.createModal);
                 console.log('Joining document with ID:', data.documentId);
+                
+                // Save to recent documents
+                this.saveDocumentToRecent(data.documentId, title, !!password);
+                
                 this.joinDocumentWithId(data.documentId, password);
                 
                 // Update URL
@@ -903,6 +912,9 @@ Write your content here...
         
         // Reset password button
         this.updatePasswordButtonText();
+        
+        // Refresh recent documents list
+        this.loadRecentDocuments();
     }
 
     showEditor() {
@@ -1239,6 +1251,134 @@ Write your content here...
         
         // Add decline message to chat
         this.addChatMessage('❌ Vorschlag wurde abgelehnt. Kann ich Ihnen auf andere Weise helfen?', 'ai');
+    }
+
+    // LocalStorage utility methods
+    getRecentDocuments() {
+        try {
+            const stored = localStorage.getItem('recentDocuments');
+            return stored ? JSON.parse(stored) : [];
+        } catch (error) {
+            console.error('Error reading recent documents from localStorage:', error);
+            return [];
+        }
+    }
+
+    saveDocumentToRecent(documentId, title, hasPassword = false) {
+        try {
+            let recentDocs = this.getRecentDocuments();
+            
+            // Remove existing entry if it exists
+            recentDocs = recentDocs.filter(doc => doc.id !== documentId);
+            
+            // Add new entry at the beginning
+            recentDocs.unshift({
+                id: documentId,
+                title: title,
+                hasPassword: hasPassword,
+                lastAccessed: new Date().toISOString(),
+                accessCount: (recentDocs.find(doc => doc.id === documentId)?.accessCount || 0) + 1
+            });
+            
+            // Keep only the last 10 documents
+            recentDocs = recentDocs.slice(0, 10);
+            
+            localStorage.setItem('recentDocuments', JSON.stringify(recentDocs));
+            this.loadRecentDocuments();
+        } catch (error) {
+            console.error('Error saving document to recent list:', error);
+        }
+    }
+
+    removeDocumentFromRecent(documentId) {
+        try {
+            let recentDocs = this.getRecentDocuments();
+            recentDocs = recentDocs.filter(doc => doc.id !== documentId);
+            localStorage.setItem('recentDocuments', JSON.stringify(recentDocs));
+            this.loadRecentDocuments();
+        } catch (error) {
+            console.error('Error removing document from recent list:', error);
+        }
+    }
+
+    loadRecentDocuments() {
+        const recentDocs = this.getRecentDocuments();
+        
+        if (!this.recentDocumentsList) {
+            return;
+        }
+        
+        if (recentDocs.length === 0) {
+            this.recentDocumentsList.innerHTML = `
+                <div class="no-documents">
+                    <p>No recent documents found. Create or join a document to get started!</p>
+                </div>
+            `;
+            return;
+        }
+        
+        this.recentDocumentsList.innerHTML = recentDocs.map(doc => {
+            const lastAccessed = new Date(doc.lastAccessed);
+            const timeAgo = this.getTimeAgo(lastAccessed);
+            
+            return `
+                <div class="document-card" data-document-id="${doc.id}">
+                    <button class="remove-btn" data-document-id="${doc.id}" title="Remove from recent">×</button>
+                    <h3>${this.escapeHtml(doc.title)}</h3>
+                    <div class="document-id">ID: ${doc.id}</div>
+                    <div class="document-meta">
+                        <span class="last-accessed">Last accessed: ${timeAgo}</span>
+                        ${doc.hasPassword ? '<span class="has-password">🔒 Protected</span>' : ''}
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+        // Add click event listeners to document cards
+        this.recentDocumentsList.querySelectorAll('.document-card').forEach(card => {
+            card.addEventListener('click', (e) => {
+                if (e.target.classList.contains('remove-btn')) {
+                    e.stopPropagation();
+                    const docId = e.target.getAttribute('data-document-id');
+                    this.removeDocumentFromRecent(docId);
+                    return;
+                }
+                
+                const docId = card.getAttribute('data-document-id');
+                this.joinRecentDocument(docId);
+            });
+        });
+    }
+
+    joinRecentDocument(documentId) {
+        this.currentDocumentId = documentId;
+        this.documentIdInput.value = documentId;
+        this.showLoading();
+        
+        // Update URL
+        window.history.pushState({}, '', `?doc=${documentId}`);
+        
+        this.joinDocumentWithId(documentId);
+    }
+
+    getTimeAgo(date) {
+        const now = new Date();
+        const diffInSeconds = Math.floor((now - date) / 1000);
+        
+        if (diffInSeconds < 60) {
+            return 'Just now';
+        } else if (diffInSeconds < 3600) {
+            const minutes = Math.floor(diffInSeconds / 60);
+            return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
+        } else if (diffInSeconds < 86400) {
+            const hours = Math.floor(diffInSeconds / 3600);
+            return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
+        } else if (diffInSeconds < 2592000) {
+            const days = Math.floor(diffInSeconds / 86400);
+            return `${days} day${days !== 1 ? 's' : ''} ago`;
+        } else {
+            return date.toLocaleDateString();
+        }
     }
 }
 
